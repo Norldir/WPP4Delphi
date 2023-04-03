@@ -1815,6 +1815,13 @@ begin
 
     //Marcelo 14/03/2023
     Th_getMessageACK   : begin
+                            LOutClass2 := TResponsegetMessageACK.Create(LResultStr);
+                            try
+                              SendNotificationCenterDirect(PResponse.TypeHeader, LOutClass2);
+                            finally
+                              FreeAndNil(LOutClass2);
+                            end;
+
                             //if Assigned(FMessagesList) then
                                //FMessagesList.Free;
 
@@ -2243,7 +2250,7 @@ begin
 
  //testa se e um JSON de forma RAPIDA!
 
-  if (Pos('WAPI IS NOT DEFINED', UpperCase(message)) > 0) then
+  if (Pos('WAPI IS NOT DEFINED', UpperCase(message)) > 0) or (Pos('WPP IS NOT DEFINED', UpperCase(message)) > 0) then
   begin
     //Injeta o JS.ABR de novo
     LogAdd('"WAPI IS NOT DEFINED" Injeta o JS.ABR de novo');

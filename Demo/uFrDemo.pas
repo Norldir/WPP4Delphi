@@ -139,6 +139,7 @@ type
     procedure TWPPConnect1GetAllCommunitys(const AllCommunitys: TRetornoAllCommunitys);
     procedure frameComunidades1btnMsgAllClick(Sender: TObject);
     procedure TimerProgressTimer(Sender: TObject);
+    procedure TWPPConnect1GetMessageACK(const GetMessageACK: TResponsegetMessageACK);
     //procedure frameGrupos1btnMudarImagemGrupoClick(Sender: TObject);
   private
     { Private declarations }
@@ -1125,18 +1126,106 @@ procedure TfrDemo.TWPPConnect1GetListChat(Sender: TObject;
   ChatsList: TGetChatList);
 var
   LChatClass: TChatListClass;
-  LMsgs: TMsgsClass;
+  contato, telefone, selectedButtonId, quotedMsg_caption, selectedRowId, IdMensagemOrigem,
+    Extensao_Documento, NomeArq_Whats, Automato_Path: string;
+  WPPConnectDecrypt: TWPPConnectDecryptFile;
+  Question, Answer, phoneNumber : string;
 begin
 
   for LChatClass in ChatsList.result do
   begin
-    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(LChatClass.id.id);
-    {for LMsgs in LChatClass.msgs do
+    if not LChatClass.isGroup then
     begin
-      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(LMsgs.from);
-      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(LMsgs.body);
-      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(LMsgs.isNewMsg.ToString(LMsgs.isNewMsg));
-    end;}
+      if not LChatClass.id.fromMe then //mensagens que eu nao enviei
+      begin
+        if LChatClass.isNewMsg then
+        begin
+          FChatID := LChatClass.id.Remote;
+          telefone := Copy(LChatClass.id.Remote, 3, Pos('@',  LChatClass.id.Remote) - 3);
+          contato := LChatClass.notifyName;
+
+          // Tratando o tipo do arquivo recebido e faz o download para pasta \temp
+            case AnsiIndexStr(UpperCase(LChatClass.&type), ['PTT', 'IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER']) of
+              0: Extensao_Documento := 'mp3';
+              1: Extensao_Documento := 'jpg';
+              2: Extensao_Documento := 'mp4';
+              3: Extensao_Documento := 'mp3';
+              4:
+              begin
+                Extensao_Documento := ExtractFileExt(LChatClass.filename);
+                Extensao_Documento := Copy(Extensao_Documento,2,length(Extensao_Documento));
+              end;
+              5: Extensao_Documento := 'jpg'; //'webp';
+            end;
+
+            Automato_Path := ExtractFilePath(ParamStr(0));
+
+            NomeArq_Whats := WPPConnectDecrypt.download(LChatClass.deprecatedMms3Url,
+                            LChatClass.mediaKey, Extensao_Documento, LChatClass.id.Remote, Automato_Path + 'Temp\');
+
+            SleepNoFreeze(100);
+            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Nome Contato: ' + Trim(LChatClass.notifyName)));
+            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('UniqueID: ' + LChatClass.id._serialized));
+            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Tipo mensagem: ' + LChatClass.&type));
+            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Chat Id: ' + LChatClass.id.remote));
+            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(StringReplace(LChatClass.body, #$A, #13#10,[rfReplaceAll, rfIgnoreCase]));
+            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('ACK: ' + FloatToStr(LChatClass.ack)));
+            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('NomeArq_Whats: ' + Trim(NomeArq_Whats)));
+
+//            selectedButtonId := LChatClass.selectedButtonId;
+//            try
+//              if Assigned(AMessage.ListResponse) then
+//                if Assigned(AMessage.ListResponse.singleSelectReply) then
+//                begin
+//                  selectedRowId := AMessage.ListResponse.singleSelectReply.selectedRowId;
+//                  if selectedRowId <> '' then
+//                    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('selectedRowId: ' + selectedRowId));
+//                end;
+//            except on E: Exception do
+//            end;
+//            try
+//              if Assigned(AMessage.quotedMsg) then
+//              begin
+//                quotedMsg_caption := AMessage.quotedMsg.Caption;
+//                if Trim(quotedMsg_caption) = '' then
+//                  if Assigned(AMessage.quotedMsg.list) then
+//                    quotedMsg_caption := AMessage.quotedMsg.list.description;
+//                if Trim(quotedMsg_caption) = '' then
+//                  quotedMsg_caption := AMessage.quotedMsg.Body;
+//                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('quotedMsg.caption: ' + quotedMsg_caption);
+//              end;
+              // Mensagem Original do Click do Botão
+//            except
+//              on E: Exception do
+//                quotedMsg_caption := '';
+//            end;
+            //Marcelo 25/07/2022 Unique ID Mensagem Origem
+            try
+              if Assigned(LChatClass.quotedMsg) then
+              begin
+                IdMensagemOrigem := LChatClass.id.remote+'_'+LChatClass.quotedStanzaID;
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Unique ID IdMensagemOrigem: ' + IdMensagemOrigem);
+              end;
+            except
+              on E: Exception do
+                IdMensagemOrigem := '';
+            end;
+//            if selectedButtonId = '' then
+//              selectedButtonId := AMessage.selectedId;
+//            if selectedButtonId <> '' then
+//              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('selectedId: ' + selectedButtonId));
+            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar(''));
+          //  frameMensagensRecebidas1.ed_profilePicThumbURL.Text := AChat.contact.profilePicThumb;
+//            if frameMensagensRecebidas1.ed_profilePicThumbURL.Text <> '' then
+//              TWPPConnect1.getProfilePicThumb(LChatClass.id.remote);
+              //GetImagemProfile(AChat.contact.profilePicThumb, AChat.id);
+
+            TWPPConnect1.ReadMessages(LChatClass.id.remote);
+
+
+        end;
+      end;
+    end;
   end;
 end;
 
@@ -1174,6 +1263,35 @@ begin
     aList.Free;
   end;
 end;
+procedure TfrDemo.TWPPConnect1GetMessageACK(const GetMessageACK: TResponsegetMessageACK);
+var
+  StatusMensagem: string;
+begin
+  //GetMessageACK.idMessage;
+
+  if GetMessageACK.ack = 1 then
+    StatusMensagem := 'Enviada'
+  else if GetMessageACK.ack = 2 then
+    StatusMensagem := 'Recebida'
+  else if GetMessageACK.ack = 3 then
+    StatusMensagem := 'Visualizada'
+  else if GetMessageACK.ack = 4 then
+    StatusMensagem := 'Aúdio Escutado';
+
+  ShowMessage('A Mensagem Foi "' + StatusMensagem + '"');
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('A Mensagem Foi "' + StatusMensagem + '"');
+  //frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Telefone: ' + GetMessageACK.&to);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Id Mensagem: ' + GetMessageACK.idMessage);
+  //if GetMessageACK.playedRemaining = 1 then
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('deliveryRemaining:  ' + FloatToStr(GetMessageACK.deliveryRemaining) );
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('readRemaining:  ' + FloatToStr(GetMessageACK.readRemaining) );
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('playedRemaining:  ' + FloatToStr(GetMessageACK.playedRemaining) );
+
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
+
+end;
+
 procedure TfrDemo.TWPPConnect1GetMessageById(const Mensagem: TMessagesClass);
 var
   StatusMensagem, wlo_Json: string;
@@ -1191,15 +1309,17 @@ begin
     else if JMessagem.Result.ack = 2 then
       StatusMensagem := 'Recebida'
     else if JMessagem.Result.ack = 3 then
-      StatusMensagem := 'Visualizada';
+      StatusMensagem := 'Visualizada'
+    else if JMessagem.Result.ack = 4 then
+      StatusMensagem := 'Aúdio Escutado';
     ShowMessage('A Mensagem Foi "' + StatusMensagem + '"');
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('A Mensagem Foi "' + StatusMensagem + '"');
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Telefone: ' + JMessagem.Result.&to);
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Id Mensagem: ' + JMessagem.Result.id._serialized);
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Mensagem: ' + JMessagem.Result.body);
-    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Enviada: ' + DateTimeToStr(UnixToDateTime(JMessagem.Result.t)));
-    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Recebida: ' + DateTimeToStr(UnixToDateTime(JMessagem.Result.ephemeralStartTimestamp)));
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Enviada: ' + DateTimeToStr(UnixToDateTime(JMessagem.Result.t, False )));
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Recebida: ' + DateTimeToStr(UnixToDateTime(JMessagem.Result.ephemeralStartTimestamp, False)));
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
 
 
@@ -1571,7 +1691,15 @@ begin
               TWPPConnect1.getProfilePicThumb(AChat.id);
               //GetImagemProfile(AChat.contact.profilePicThumb, AChat.id);
 
+            //Marcar Mensagem como Lida
             TWPPConnect1.ReadMessages(AChat.id);
+
+            //Marcar Audio como Escutado
+            if (UpperCase(AMessage.&type) = 'AUDIO') or (UpperCase(AMessage.&type) = 'PTT') then
+              TWPPConnect1.markPlayed(AMessage.id);
+
+
+
             // if frameMensagensRecebidas1.chk_AutoResposta.Checked then
             // VerificaPalavraChave(AMessage.body, '', telefone, contato);
 
