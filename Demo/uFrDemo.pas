@@ -16,7 +16,7 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants,
   System.Classes, Vcl.Graphics,Rtti, strUtils, IniFiles, System.IOUtils,
-  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.WinXCtrls, Winapi.ShellAPI,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.WinXCtrls, Winapi.ShellAPI, RegularExpressions, System.Character,
   // ############ ATENCAO AQUI ####################
   // units adicionais obrigatorias
   uTWPPConnect.ConfigCEF, uTWPPConnect, uTWPPConnect.Constant, uTWPPConnect.JS,
@@ -62,6 +62,8 @@ type
     TimerRestauraPastaCache: TTimer;
     frameComunidades1: TframeComunidades;
     TimerProgress: TTimer;
+    lblNomeConta: TLabel;
+    Timer1: TTimer;
     procedure FormShow(Sender: TObject);
     procedure frameLogin1SpeedButton1Click(Sender: TObject);
     procedure TWPPConnect1GetQrCode(const Sender: TObject;
@@ -116,7 +118,6 @@ type
     procedure TWPPConnect1CheckNumberExists(const vCheckNumberExists: TReturnCheckNumberExists);
     procedure TWPPConnect1getLastSeen(const vgetLastSeen: TReturngetLastSeen);
     procedure TWPPConnect1GetMessageById(const Mensagem: TMessagesClass);
-    procedure TWPPConnect1GetMessages(const Chats: TRootClass);
     procedure TWPPConnect1GetIsReady(Sender: TObject; IsReady: Boolean);
     procedure TWPPConnect1GetIsLoaded(Sender: TObject; IsLoaded: Boolean);
     procedure TWPPConnect1GetIsAuthenticated(Sender: TObject; IsAuthenticated: Boolean);
@@ -140,6 +141,25 @@ type
     procedure frameComunidades1btnMsgAllClick(Sender: TObject);
     procedure TimerProgressTimer(Sender: TObject);
     procedure TWPPConnect1GetMessageACK(const GetMessageACK: TResponsegetMessageACK);
+    procedure TWPPConnect1GetEnvIsOnline(Response: TEnvIsOnline);
+    procedure TWPPConnect1GetIsOnline(Response: TIsOnline);
+    procedure TWPPConnect1GetMyContactsList(const MyContacts: TRetornoAllContacts);
+    procedure TWPPConnect1GetPoolResponse(const PoolResponse: TPoolResponseClass);
+    procedure TWPPConnect1GetPoolResponseEvento(const PoolResponse: TPoolResponseClass);
+    procedure TWPPConnect1GetNewMessageResponseEvento(const NewMessageResponse: TNewMessageResponseClass);
+    procedure TWPPConnect1GetReactResponseEvento(const ReactionResponse: TReactionResponseClass);
+    procedure TWPPConnect1Get_SendPollMessageResponse(const SendPollMessageResponse: TSendPollMessageResponseClass);
+    procedure TWPPConnect1Getmsg_revokeEvento(const RevokeMsg: TRevokeClass);
+    procedure TWPPConnect1GetAck_changeEvento(const Ack_change: TAck_changeClass);
+    procedure TWPPConnect1GetTotalChatsUserRead(const TotalChatsUserRead: TTotalChatsUserRead);
+    procedure TWPPConnect1GetWAVersion(const WhatsAppWebVersion: TWAVersion);
+    procedure TWPPConnect1GetgenLinkDeviceCodeForPhoneNumber(const Response: TGenLinkDeviceCodeForPhoneNumber);
+    procedure TWPPConnect1GetMessages(const Response: TGetMessageClass);
+    procedure TWPPConnect1Getmsg_EditedEvento(const MsgEdited: TEditedClass);
+    procedure Timer1Timer(Sender: TObject);
+    procedure TWPPConnect1Get_ErrorResponse(const Response: TErrorResponseClass);
+    procedure TWPPConnect1RetErrorWhiteScreen(Sender: TObject; Response: string);
+    procedure TWPPConnect1Get_deleteMessageNewResponse(const Response: TdeleteMessageNewResponseClass);
     //procedure frameGrupos1btnMudarImagemGrupoClick(Sender: TObject);
   private
     { Private declarations }
@@ -155,8 +175,11 @@ type
     function GetAPIKey: string;
     function AskQuestion(const Question, phoneNumber: string): string;
     procedure LerConfiguracoes;
+    procedure gravar_log(linha: string);
     procedure copia_arquivo(arquivo_origem, arquivo_destino: string);
     procedure DeleteFiles(const FileName: String);
+    function ConvertUnicodeEscapeToUTF8(const input: string): UTF8String;
+    function IsValidUnicodeCodePoint(value: Word): Boolean;
   public
     FChatID: string;
     { Public declarations }
@@ -170,6 +193,7 @@ type
       pContato: String): Boolean;
     function killtask(ExeFileName: string): Integer;
     function CaractersWeb(vText: string): string;
+    function SomenteNumero(const S: string): string;
 
    var   {validando numeros em listagem}
      r_CheckNumber, r_CheckOnline : boolean;  {verifica se rotina está ativa}
@@ -210,6 +234,31 @@ begin
       raise Exception.Create('API key not provided.');
   end;
   WriteLn(''); }
+end;
+
+procedure TfrDemo.gravar_log(linha: string);
+var
+  nomearq: string;
+  arq: TextFile;
+begin
+  try
+    nomearq := ExtractFilePath(ParamStr(0)) + 'Log' + '\Log' + FormatDateTime('YYYY-MM-DD',now) + '.log';
+    AssignFile(arq, nomearq);
+    try
+      if FileExists(nomearq) then
+        Append(arq)
+      else
+        Rewrite(arq);
+
+      Writeln(arq, FormatDateTime('DD/MM/YYYY', Date) + ' ' +
+        FormatDateTime('HH:MM:SS:ZZ', time) + ' ' + linha);
+      Flush(arq);
+    finally
+      CloseFile(arq);
+    end;
+  except
+  end;
+
 end;
 
 procedure TfrDemo.DeleteFiles(const FileName: String);
@@ -599,7 +648,6 @@ begin
 end;
 procedure TfrDemo.FormCreate(Sender: TObject);
 begin
-
   {$IFDEF DEBUG}
   ReportMemoryLeaksOnShutdown := True;
   {$ENDIF}
@@ -610,37 +658,40 @@ begin
   SetLength(MensagensArray, 50);
   iPosicaoMsgArray := 0;
   LerConfiguracoes;
+
+  if not(DirectoryExists(ExtractFilePath(ParamStr(0)) + 'Log')) then
+    CreateDir(ExtractFilePath(ParamStr(0)) + 'Log');
 end;
 
 procedure TfrDemo.FormShow(Sender: TObject);
 begin
   frameLogin1.Visible := True;
+  frameLogin1.lblCodeLinkDevice.Caption := '';
   ctbtn.Categories.Items[0].Items[0].ImageIndex := 1;
   timerStatus.Enabled := True;
   //Warsaw e GBPlugin, este processos bloqueia o uso do WhatsAppWeb
   killtask('Gbpsv.exe');
   killtask('core.exe');
 end;
+
 procedure TfrDemo.frameCatalogo1Button1Click(Sender: TObject);
 begin
   frameCatalogo1.Button1Click(Sender);
 end;
+
 procedure TfrDemo.frameComunidades1btnCriarGrupoClick(Sender: TObject);
 begin
   frameComunidades1.btnCriarGrupoClick(Sender);
-
 end;
 
 procedure TfrDemo.frameComunidades1btnListarComunidadesClick(Sender: TObject);
 begin
   frameComunidades1.btnListarComunidadesClick(Sender);
-
 end;
 
 procedure TfrDemo.frameComunidades1btnMsgAllClick(Sender: TObject);
 begin
   frameComunidades1.btnMsgAllClick(Sender);
-
 end;
 
 procedure TfrDemo.frameLogin1SpeedButton1Click(Sender: TObject);
@@ -697,6 +748,26 @@ begin
 
 end;
 
+function TfrDemo.SomenteNumero(const S: string): string;
+var
+  vText: PChar;
+begin
+  vText := PChar(S);
+  Result := '';
+
+  while (vText^ <> #0) do
+  begin
+{$IFDEF UNICODE}
+    if CharInSet(vText^, ['0' .. '9']) then
+{$ELSE}
+    if vText^ in ['0' .. '9'] then
+{$ENDIF}
+      Result := Result + vText^;
+
+    inc(vText);
+  end;
+end;
+
 procedure TfrDemo.TimerVerificaConexaoTimer(Sender: TObject);
 begin
   TimerVerificaConexao.Enabled := False;
@@ -710,7 +781,7 @@ begin
     whatsappsms := 0;
     r_CheckOnline := True;
 
-    try TWPPConnect1.CheckNumberExists('17981388414'); except end;
+    try TWPPConnect1.CheckNumberExists('17981594861'); except end;
 
     inc(TentativaConexao);
 
@@ -718,6 +789,24 @@ begin
   end;
 
   TimerVerificaConexao.Enabled := True;
+end;
+
+procedure TfrDemo.Timer1Timer(Sender: TObject);
+begin
+  Timer1.Enabled := False;
+
+  try
+    if not TWPPConnect1.Auth(False) then
+    Begin
+      TWPPConnect1.FormQrCodeType :=
+        TFormQrCodeType(frameLogin1.rgTipoLogin.ItemIndex);
+      TWPPConnect1.FormQrCodeStart;
+    End;
+    if not TWPPConnect1.FormQrCodeShowing then
+      TWPPConnect1.FormQrCodeShowing := True;
+
+  except on E: Exception do
+  end;
 end;
 
 procedure TfrDemo.TimerCheckOnlineTimer(Sender: TObject);
@@ -935,6 +1024,7 @@ begin
   frameLogin1.whatsOff.Visible := True;
   frameLogin1.whatsOn.Visible := False;
   frameLogin1.SpeedButton3.Enabled := True;
+
   ShowMessage('Conexão foi finalizada pelo celular');
 end;
 
@@ -942,6 +1032,40 @@ procedure TfrDemo.TWPPConnect1ErroAndWarning(Sender: TObject;
   const PError, PInfoAdc: string);
 begin
   raise Exception.Create(PError + ' - ' + PInfoAdc);
+end;
+
+procedure TfrDemo.TWPPConnect1GetAck_changeEvento(const Ack_change: TAck_changeClass);
+var
+  StatusMensagem: string;
+  x: integer;
+begin
+  //GetMessageACK.idMessage;
+
+  if Ack_change.msg.ack = 1 then
+    StatusMensagem := 'Enviada'
+  else if Ack_change.msg.ack = 2 then
+    StatusMensagem := 'Recebida'
+  else if Ack_change.msg.ack = 3 then
+    StatusMensagem := 'Visualizada'
+  else if Ack_change.msg.ack = 4 then
+    StatusMensagem := 'Audio Escutado';
+
+  //ShowMessage('A Mensagem Foi "' + StatusMensagem + '"');
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Ack: ' + FloatToStr(Ack_change.msg.ack));
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('A Mensagem Foi "' + StatusMensagem + '"');
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('chat: ' + Ack_change.msg.chat);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('sender: ' + Ack_change.msg.sender);
+
+  for x := 0 to Length(Ack_change.msg.ids) -1 do
+  begin
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Id Mensagem: ' + Ack_change.msg.ids[x]._serialized);
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('fromMe: ' + Ack_change.msg.ids[x].fromMe.ToString);
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('remote: ' + Ack_change.msg.ids[x].remote);
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('participant: ' + Ack_change.msg.ids[x].participant);
+  end;
+
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
 end;
 
 procedure TfrDemo.TWPPConnect1GetAllCommunitys(const AllCommunitys: TRetornoAllCommunitys);
@@ -960,11 +1084,17 @@ procedure TfrDemo.TWPPConnect1GetAllContactList(const AllContacts
   : TRetornoAllContacts);
 var
   AContact: uTWPPConnect.Classes.TContactClass;
+  wlo_AuxNome: string;
 begin
+
   frameMensagem1.listaContatos.Clear;
   for AContact in AllContacts.Result do
   begin
-    AddContactList(AContact.id + ' ' + AContact.name);
+    wlo_AuxNome := AContact.name;
+    if Trim(wlo_AuxNome) = '' then
+      wlo_AuxNome := AContact.formattedName;
+
+    AddContactList(AContact.id + ' - ' + wlo_AuxNome);
   end;
   AContact := nil;
 end;
@@ -1009,11 +1139,16 @@ procedure TfrDemo.TWPPConnect1GetAllGroupList(const AllGroups
   : TRetornoAllGroups);
 var
   i: integer;
+  TextGroup: String;
 begin
   frameGrupos1.listaGrupos.Clear;
   for i := 0 to (AllGroups.Numbers.count) - 1 do
   begin
-    AddGroupList(AllGroups.Numbers[i])
+    TextGroup := AllGroups.Numbers[i];
+    //TextGroup := UnicodeToUtf8(AllGroups.Numbers[i]);
+    //UnicodeToUtf8(TextGroup, AllGroups.Numbers[i], 0);
+    //TextGroup := ConvertUnicodeEscapeToUTF8(UTF8Encode(AllGroups.Numbers[i]));
+    AddGroupList(TextGroup);
   end;
 end;
 procedure TfrDemo.TWPPConnect1GetChatList(const Chats: TChatList);
@@ -1024,6 +1159,7 @@ begin
   frameMensagem1.listaChats.Clear;
   for AChat in Chats.Result do
   begin
+    NomeContato := '';
     if AChat.contact.pushname <> '' then
       NomeContato := AChat.contact.pushname
     else
@@ -1047,17 +1183,53 @@ begin
   else
     ShowMessage('Whatsapp Invalid');
 end;
+procedure TfrDemo.TWPPConnect1GetEnvIsOnline(Response: TEnvIsOnline);
+begin
+  if Response.IsOnline then
+  begin
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Disparou Evento "Online"');
+
+    Label3.Caption := 'Online';
+    frameLogin1.lblStatus.Caption := 'Online';
+    frameLogin1.lblStatus.Font.Color := $0000AE11;
+    frameLogin1.SpeedButton3.Enabled := True;
+    frameLogin1.whatsOn.Visible := True;
+    frameLogin1.whatsOff.Visible := False;
+    StatusBar1.Panels[1].Text := 'Online';
+    frameLogin1.imgQrCode.Picture := nil;
+  end
+  else
+  begin
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Disparou Evento "Offline"');
+
+    Label3.Caption := 'Offline';
+    frameLogin1.lblStatus.Caption := 'Offline';
+    frameLogin1.lblStatus.Font.Color := $002894FF;
+    frameLogin1.lblStatus.Font.Color := clGrayText;
+    frameLogin1.whatsOff.Visible := True;
+    frameLogin1.whatsOn.Visible := False;
+    frameLogin1.SpeedButton3.Enabled := True;
+    StatusBar1.Panels[1].Text := 'Offline';
+  end;
+end;
+
+procedure TfrDemo.TWPPConnect1GetgenLinkDeviceCodeForPhoneNumber(const Response: TGenLinkDeviceCodeForPhoneNumber);
+begin
+  frameLogin1.lblCodeLinkDevice.Caption := Response.code;
+  Update;
+end;
+
 procedure TfrDemo.TWPPConnect1GetHistorySyncProgress(const GetHistorySyncProgress: TResponsegetHistorySyncProgress);
 begin
  //
- frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
+ {frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('progresso: ' + GetHistorySyncProgress.progress.ToString);
  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('paused: ' + GetHistorySyncProgress.paused.ToString());
- frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('inProgress: ' + GetHistorySyncProgress.inProgress.ToString());
+ frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('inProgress: ' + GetHistorySyncProgress.inProgress.ToString());}
 
  frameLogin1.ProgressBar1.Position := GetHistorySyncProgress.progress;
 
- ShowMessage('progresso: ' + GetHistorySyncProgress.progress.ToString);
+ //ShowMessage('progresso: ' + GetHistorySyncProgress.progress.ToString);
 end;
 
 procedure TfrDemo.TWPPConnect1GetIncomingiCall(const IncomingiCall: TIncomingiCall);
@@ -1065,7 +1237,8 @@ begin
   Caption := 'WPP4Delphi - Powered by WPPConnect Team' + ' - Recebendo Ligação: ' + IncomingiCall.sender;
   Application.ProcessMessages;
   frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
-  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Recebendo Ligação: sender: ' + IncomingiCall.sender + ' peerJid: ' + IncomingiCall.peerJid + ' isGroup: ' + IncomingiCall.isGroup.ToString() + ' isVideo: ' + IncomingiCall.isVideo.ToString()+ ' offerTime: ' + DateTimeToStr(UnixToDateTime(IncomingiCall.offerTime)) );
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Recebendo Ligação: sender: ' + IncomingiCall.sender + ' peerJid: ' + IncomingiCall.peerJid + ' isGroup: ' + IncomingiCall.isGroup.ToString() + ' isVideo: ' + IncomingiCall.isVideo.ToString()+
+    ' offerTime: ' + DateTimeToStr(UnixToDateTime(IncomingiCall.offerTime, False)) );
   frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
   SleepNoFreeze(2000);
   TWPPConnect1.rejectCall(IncomingiCall.id);
@@ -1074,6 +1247,7 @@ begin
   Caption := 'WPP4Delphi - Powered by WPPConnect Team';
   Application.ProcessMessages;
 end;
+
 procedure TfrDemo.TWPPConnect1GetInviteGroup(const Invite: string);
 begin
   Clipboard.AsText := 'https://chat.whatsapp.com/' + Invite;
@@ -1084,7 +1258,7 @@ begin
   frameLogin1.lblStatus.Caption := 'Auntenticado';
   Label3.Caption := 'Auntenticado QrCode Aguarde Sincronizando Conversas...';
   TimerCopiarPastaCache.Enabled := True;
-  TimerProgress.Enabled := True;
+  //TimerProgress.Enabled := True;
   //Application.ProcessMessages;
 end;
 
@@ -1092,7 +1266,35 @@ procedure TfrDemo.TWPPConnect1GetIsLoaded(Sender: TObject; IsLoaded: Boolean);
 begin
   frameLogin1.lblStatus.Caption := 'Carregando...';
   Label3.Caption := 'Carregando Conversas Aguarde...';
-  TimerProgress.Enabled := True;
+  //TimerProgress.Enabled := True;
+end;
+
+procedure TfrDemo.TWPPConnect1GetIsOnline(Response: TIsOnline);
+begin
+  if Response.IsOnline then
+  begin
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Online');
+
+    frameLogin1.lblStatus.Caption := 'Online';
+    frameLogin1.lblStatus.Font.Color := $0000AE11;
+    frameLogin1.SpeedButton3.Enabled := True;
+    frameLogin1.whatsOn.Visible := True;
+    frameLogin1.whatsOff.Visible := False;
+    StatusBar1.Panels[1].Text := 'Online';
+    frameLogin1.imgQrCode.Picture := nil;
+  end
+  else
+  begin
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Offline');
+
+    frameLogin1.lblStatus.Caption := 'Offline';
+    frameLogin1.lblStatus.Font.Color := $002894FF;
+    frameLogin1.lblStatus.Font.Color := clGrayText;
+    frameLogin1.whatsOff.Visible := True;
+    frameLogin1.whatsOn.Visible := False;
+    frameLogin1.SpeedButton3.Enabled := True;
+    StatusBar1.Panels[1].Text := 'Offline';
+  end;
 end;
 
 procedure TfrDemo.TWPPConnect1GetIsReady(Sender: TObject; IsReady: Boolean);
@@ -1102,8 +1304,14 @@ begin
   frameLogin1.lblStatus.Font.Color := $0000AE11;
   frameLogin1.SpeedButton3.Enabled := True;
   frameLogin1.whatsOn.Visible := True;
+  frameLogin1.whatsOff.Visible := False;
+  frameLogin1.imgQrCode.Picture := nil;
   ctbtn.Enabled := True;
   TimerProgress.Enabled := False;
+
+  TWPPConnect1.GetMyNumber;
+  TWPPConnect1.getWAVersion;
+  TWPPConnect1.GetMe;
 
   //frameLogin1.lblStatus.Caption := 'Online Pronto Para Uso';
   StatusBar1.Panels[1].Text := frameLogin1.lblStatus.Caption;
@@ -1122,109 +1330,171 @@ procedure TfrDemo.TWPPConnect1getLastSeen(const vgetLastSeen: TReturngetLastSeen
 begin
   ShowMessage('Visto por Último: '+ DateTimeToStr(UnixToDateTime(vgetLastSeen.LastSeen, False)));
 end;
-procedure TfrDemo.TWPPConnect1GetListChat(Sender: TObject;
-  ChatsList: TGetChatList);
+
+procedure TfrDemo.TWPPConnect1GetListChat(Sender: TObject; ChatsList: TGetChatList);
 var
   LChatClass: TChatListClass;
   contato, telefone, selectedButtonId, quotedMsg_caption, selectedRowId, IdMensagemOrigem,
     Extensao_Documento, NomeArq_Whats, Automato_Path: string;
   WPPConnectDecrypt: TWPPConnectDecryptFile;
   Question, Answer, phoneNumber : string;
+  ChatGroup, mensagemDuplicada : Boolean;
+  I: Integer;
 begin
 
   for LChatClass in ChatsList.result do
   begin
-    if not LChatClass.isGroup then
+    ChatGroup := pos('@g.us', LChatClass.id.Remote) > 0;
+
+    if not ChatGroup {LChatClass.isGroup} then
     begin
       if not LChatClass.id.fromMe then //mensagens que eu nao enviei
       begin
-        if LChatClass.isNewMsg then
+        //if LChatClass.isNewMsg then
         begin
-          FChatID := LChatClass.id.Remote;
-          telefone := Copy(LChatClass.id.Remote, 3, Pos('@',  LChatClass.id.Remote) - 3);
-          contato := LChatClass.notifyName;
+          if (AnsiUpperCase(LChatClass.&type) <> 'CIPHERTEXT')
+          and (AnsiUpperCase(LChatClass.&type) <> 'E2E_NOTIFICATION')
+          and (AnsiUpperCase(LChatClass.&type) <> 'GP2')
+          and (AnsiUpperCase(LChatClass.&type) <> 'PROTOCOL')
+          then //Ignorar Mensagem
+          begin
+            FChatID := LChatClass.id.Remote;
+            telefone := Copy(LChatClass.id.Remote, 3, Pos('@',  LChatClass.id.Remote) - 3);
+            contato := LChatClass.notifyName;
+            Extensao_Documento := '';
 
-          // Tratando o tipo do arquivo recebido e faz o download para pasta \temp
-            case AnsiIndexStr(UpperCase(LChatClass.&type), ['PTT', 'IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER']) of
-              0: Extensao_Documento := 'mp3';
-              1: Extensao_Documento := 'jpg';
-              2: Extensao_Documento := 'mp4';
-              3: Extensao_Documento := 'mp3';
-              4:
+            mensagemDuplicada := False;
+
+            for I := 0 to 29 do
+            begin
+              if MensagensArray[I] = LChatClass.id._serialized then
               begin
-                Extensao_Documento := ExtractFileExt(LChatClass.filename);
-                Extensao_Documento := Copy(Extensao_Documento,2,length(Extensao_Documento));
+                mensagemDuplicada := True;
+                //Forçar Marcar como Lida
+                TWPPConnect1.ReadMessages(FChatID);
+                Break;
               end;
-              5: Extensao_Documento := 'jpg'; //'webp';
             end;
 
-            Automato_Path := ExtractFilePath(ParamStr(0));
-
-            NomeArq_Whats := WPPConnectDecrypt.download(LChatClass.deprecatedMms3Url,
-                            LChatClass.mediaKey, Extensao_Documento, LChatClass.id.Remote, Automato_Path + 'Temp\');
-
-            SleepNoFreeze(100);
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Nome Contato: ' + Trim(LChatClass.notifyName)));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('UniqueID: ' + LChatClass.id._serialized));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Tipo mensagem: ' + LChatClass.&type));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Chat Id: ' + LChatClass.id.remote));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(StringReplace(LChatClass.body, #$A, #13#10,[rfReplaceAll, rfIgnoreCase]));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('ACK: ' + FloatToStr(LChatClass.ack)));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('NomeArq_Whats: ' + Trim(NomeArq_Whats)));
-
-//            selectedButtonId := LChatClass.selectedButtonId;
-//            try
-//              if Assigned(AMessage.ListResponse) then
-//                if Assigned(AMessage.ListResponse.singleSelectReply) then
-//                begin
-//                  selectedRowId := AMessage.ListResponse.singleSelectReply.selectedRowId;
-//                  if selectedRowId <> '' then
-//                    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('selectedRowId: ' + selectedRowId));
-//                end;
-//            except on E: Exception do
-//            end;
-//            try
-//              if Assigned(AMessage.quotedMsg) then
-//              begin
-//                quotedMsg_caption := AMessage.quotedMsg.Caption;
-//                if Trim(quotedMsg_caption) = '' then
-//                  if Assigned(AMessage.quotedMsg.list) then
-//                    quotedMsg_caption := AMessage.quotedMsg.list.description;
-//                if Trim(quotedMsg_caption) = '' then
-//                  quotedMsg_caption := AMessage.quotedMsg.Body;
-//                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('quotedMsg.caption: ' + quotedMsg_caption);
-//              end;
-              // Mensagem Original do Click do Botão
-//            except
-//              on E: Exception do
-//                quotedMsg_caption := '';
-//            end;
-            //Marcelo 25/07/2022 Unique ID Mensagem Origem
-            try
-              if Assigned(LChatClass.quotedMsg) then
+            //AVALIAR MSG JÁ EM MEMÓRIA
+            if not (mensagemDuplicada) then
+            begin
+              if iPosicaoMsgArray <= 29 then
               begin
-                IdMensagemOrigem := LChatClass.id.remote+'_'+LChatClass.quotedStanzaID;
-                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Unique ID IdMensagemOrigem: ' + IdMensagemOrigem);
+                MensagensArray[iPosicaoMsgArray] := LChatClass.id._serialized;
+                iPosicaoMsgArray := iPosicaoMsgArray + 1;
+              end
+              else
+              begin
+                iPosicaoMsgArray := 0;
+                MensagensArray[iPosicaoMsgArray] := LChatClass.id._serialized;
               end;
-            except
-              on E: Exception do
-                IdMensagemOrigem := '';
+
+            // Tratando o tipo do arquivo recebido e faz o download para pasta \temp
+              case AnsiIndexStr(UpperCase(LChatClass.&type), ['PTT', 'IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER', 'PTV']) of
+                0: Extensao_Documento := 'mp3';
+                1: Extensao_Documento := 'jpg';
+                2: Extensao_Documento := 'mp4';
+                3: Extensao_Documento := 'mp3';
+                4:
+                begin
+                  Extensao_Documento := ExtractFileExt(LChatClass.filename);
+                  Extensao_Documento := Copy(Extensao_Documento,2,length(Extensao_Documento));
+                end;
+                5: Extensao_Documento := 'jpg'; //'webp';
+                6: Extensao_Documento := 'mp4'; //Instant Vídeo
+              end;
+
+              Automato_Path := ExtractFilePath(ParamStr(0));
+
+              SleepNoFreeze(100);
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Type: ' + Trim(LChatClass.&type)));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Nome Contato: ' + Trim(LChatClass.notifyName)));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('UniqueID: ' + LChatClass.id._serialized));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Tipo mensagem: ' + LChatClass.&type));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Chat Id: ' + LChatClass.id.remote));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(StringReplace(LChatClass.body, #$A, #13#10,[rfReplaceAll, rfIgnoreCase]));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('ACK: ' + FloatToStr(LChatClass.ack)));
+
+              if Extensao_Documento <> '' then
+              begin
+                NomeArq_Whats := WPPConnectDecrypt.download(LChatClass.deprecatedMms3Url,
+                                LChatClass.mediaKey, Extensao_Documento, LChatClass.id.Remote, Automato_Path + 'Temp\');
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('NomeArq_Whats: ' + Trim(NomeArq_Whats)));
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Caption: ' + Trim(LChatClass.Caption)));
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Filename: ' + Trim(LChatClass.filename)));
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('mediakey: ' + Trim(LChatClass.mediaKey)));
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('deprecatedMms3Url: ' + Trim(LChatClass.deprecatedMms3Url)));
+              end;
+
+
+  //            selectedButtonId := LChatClass.selectedButtonId;
+  //            try
+  //              if Assigned(AMessage.ListResponse) then
+  //                if Assigned(AMessage.ListResponse.singleSelectReply) then
+  //                begin
+  //                  selectedRowId := AMessage.ListResponse.singleSelectReply.selectedRowId;
+  //                  if selectedRowId <> '' then
+  //                    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('selectedRowId: ' + selectedRowId));
+  //                end;
+  //            except on E: Exception do
+  //            end;
+  //            try
+  //              if Assigned(AMessage.quotedMsg) then
+  //              begin
+  //                quotedMsg_caption := AMessage.quotedMsg.Caption;
+  //                if Trim(quotedMsg_caption) = '' then
+  //                  if Assigned(AMessage.quotedMsg.list) then
+  //                    quotedMsg_caption := AMessage.quotedMsg.list.description;
+  //                if Trim(quotedMsg_caption) = '' then
+  //                  quotedMsg_caption := AMessage.quotedMsg.Body;
+  //                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('quotedMsg.caption: ' + quotedMsg_caption);
+  //              end;
+                // Mensagem Original do Click do Botão
+  //            except
+  //              on E: Exception do
+  //                quotedMsg_caption := '';
+  //            end;
+              //Marcelo 25/07/2022 Unique ID Mensagem Origem
+              try
+                if Assigned(LChatClass.quotedMsg) then
+                begin
+                  IdMensagemOrigem := 'true_' + LChatClass.id.remote+'_' + LChatClass.quotedStanzaID;
+                  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Unique ID IdMensagemOrigem: ' + IdMensagemOrigem);
+                  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('body MensagemOrigem: ' + LChatClass.quotedMsg.body);
+                  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Type MensagemOrigem: ' + LChatClass.quotedMsg.&type);
+                end;
+              except
+                on E: Exception do
+                  IdMensagemOrigem := '';
+              end;
+  //            if selectedButtonId = '' then
+  //              selectedButtonId := AMessage.selectedId;
+  //            if selectedButtonId <> '' then
+  //              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('selectedId: ' + selectedButtonId));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar(''));
+            //  frameMensagensRecebidas1.ed_profilePicThumbURL.Text := AChat.contact.profilePicThumb;
+  //            if frameMensagensRecebidas1.ed_profilePicThumbURL.Text <> '' then
+  //              TWPPConnect1.getProfilePicThumb(LChatClass.id.remote);
+                //GetImagemProfile(AChat.contact.profilePicThumb, AChat.id);
+
+              TWPPConnect1.ReadMessages(LChatClass.id.remote);
+
+              //Marcar Audio como Escutado
+              if (UpperCase(LChatClass.&type) = 'AUDIO') or (UpperCase(LChatClass.&type) = 'PTT') then
+                TWPPConnect1.markPlayed(LChatClass.id._serialized);
+
+              TWPPConnect1.getProfilePicThumb(LChatClass.id.remote);
             end;
-//            if selectedButtonId = '' then
-//              selectedButtonId := AMessage.selectedId;
-//            if selectedButtonId <> '' then
-//              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('selectedId: ' + selectedButtonId));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar(''));
-          //  frameMensagensRecebidas1.ed_profilePicThumbURL.Text := AChat.contact.profilePicThumb;
-//            if frameMensagensRecebidas1.ed_profilePicThumbURL.Text <> '' then
-//              TWPPConnect1.getProfilePicThumb(LChatClass.id.remote);
-              //GetImagemProfile(AChat.contact.profilePicThumb, AChat.id);
-
-            TWPPConnect1.ReadMessages(LChatClass.id.remote);
-
-
+          end;
         end;
       end;
+    end
+    else
+    begin
+      //GRUPOS E COMUNIDADES
+      TWPPConnect1.ReadMessages(LChatClass.id.remote);
+
     end;
   end;
 end;
@@ -1235,34 +1505,19 @@ var
 begin
   try
     aList := TStringList.Create();
-    aList.Add('Battery: ' + vMe.battery.ToString);
-    aList.Add('LC: ' + vMe.lc);
-    aList.Add('LG: ' + vMe.lg);
-    aList.Add('Locate: ' + vMe.locate);
-    if vMe.plugged then
-      aList.Add('Plugged: true')
-    else
-      aList.Add('Plugged: false');
+    aList.Add('Id: ' + vMe.id);
     aList.Add('Pushname: ' + vMe.pushname);
-    aList.Add('ServerToken: ' + vMe.serverToken);
-    aList.Add('Status: ' + vMe.status.status);
-    aList.Add('Me: ' + vMe.me);
-    aList.Add('Phone Device_Manufacturer:  ' + vMe.phone.device_manufacturer);
-    aList.Add('Phone Device Model: ' + vMe.phone.device_model);
-    aList.Add('Phone MCC: ' + vMe.phone.mcc);
-    aList.Add('Phone MNC: ' + vMe.phone.mnc);
-    aList.Add('Phone OS Builder Number: ' + vMe.phone.os_build_number);
-    aList.Add('Phone OS Version: ' + vMe.phone.os_version);
-    aList.Add('Phone wa Version: ' + vMe.phone.wa_version);
-    if vMe.phone.InjectWorking then
-      aList.Add('Phone InjectWorkink: true')
-    else
-      aList.Add('Phone InjectWorkin: false');
-    ShowMessage(aList.Text);
+    aList.Add('shortName: ' + vMe.shortName);
+    aList.Add('name: ' + vMe.name);
+
+    lblNomeConta.Caption := vMe.pushname;
+
+    //ShowMessage(aList.Text);
   finally
     aList.Free;
   end;
 end;
+
 procedure TfrDemo.TWPPConnect1GetMessageACK(const GetMessageACK: TResponsegetMessageACK);
 var
   StatusMensagem: string;
@@ -1276,7 +1531,7 @@ begin
   else if GetMessageACK.ack = 3 then
     StatusMensagem := 'Visualizada'
   else if GetMessageACK.ack = 4 then
-    StatusMensagem := 'Aúdio Escutado';
+    StatusMensagem := 'Audio Escutado';
 
   ShowMessage('A Mensagem Foi "' + StatusMensagem + '"');
   frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
@@ -1311,7 +1566,7 @@ begin
     else if JMessagem.Result.ack = 3 then
       StatusMensagem := 'Visualizada'
     else if JMessagem.Result.ack = 4 then
-      StatusMensagem := 'Aúdio Escutado';
+      StatusMensagem := 'Audio Escutado';
     ShowMessage('A Mensagem Foi "' + StatusMensagem + '"');
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('A Mensagem Foi "' + StatusMensagem + '"');
@@ -1321,7 +1576,6 @@ begin
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Enviada: ' + DateTimeToStr(UnixToDateTime(JMessagem.Result.t, False )));
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Recebida: ' + DateTimeToStr(UnixToDateTime(JMessagem.Result.ephemeralStartTimestamp, False)));
     frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
-
 
     {if Mensagem.Result.ack = 1 then
       StatusMensagem := 'Enviada'
@@ -1343,16 +1597,152 @@ begin
   end;
 end;
 
-procedure TfrDemo.TWPPConnect1GetMessages(const Chats: TRootClass);
+procedure TfrDemo.TWPPConnect1GetMessages(const Response: TGetMessageClass);
 var
-  AChat: uTWPPConnect.Classes.TResultClass;
+  wlo_Celular, quotedMsg_caption, Extensao_Documento, Automato_Path, NomeArq_Whats, IdMensagemOrigem : string;
+  m: integer;
+  WPPConnectDecrypt: TWPPConnectDecryptFile;
+  ChatGroup: Boolean;
 begin
-  for AChat in Chats.Result do
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('getMessage: ' + Response.Chatid);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('TotalMensagens: ' + IntToStr(Length(Response.Msgs)));
+
+  for m := 0 to Length(Response.Msgs) -1 do
   begin
-    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Body: ' + Trim(AChat.body)));
+    ChatGroup := pos('@g.us', Response.Msgs[m].id.Remote) > 0;
+    if ChatGroup then
+    begin
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Group: True');
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Chat Id: ' + Response.Msgs[m].id.remote);
+    end;
+
+    wlo_Celular := Copy(Response.Msgs[m].from,1,  pos('@', Response.Msgs[m].from) -1); // nr telefone
+    //ShowMessage('body: ' + AnsiUpperCase(Response.Msgs[m].body) + ' Número WhatsApp: ' + wlo_Celular);
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.add('');
+
+    if Response.Msgs[m].id.fromMe then
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('fromMe: True') else
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('fromMe: False');
+
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Nome Contato Sender: ' + Trim(Response.Msgs[m].notifyName));
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Número WhatsApp: ' + wlo_Celular);
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.add('body: ' + AnsiUpperCase(Response.Msgs[m].body));
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Unique id: ' + Response.Msgs[m].id._serialized);
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Type: ' + Response.Msgs[m].&type);
+
+    if Response.Msgs[m].mediaKey <> '' then
+    begin
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('mimetype: ' + Response.Msgs[m].mimetype);
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('deprecatedMms3Url: ' + Response.Msgs[m].deprecatedMms3Url);
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('mediaKey: ' + Response.Msgs[m].mediaKey);
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('filename: ' + Response.Msgs[m].filename);
+
+      // Tratando o tipo do arquivo recebido e faz o download para pasta \temp
+      case AnsiIndexStr(UpperCase(Response.Msgs[m].&type), ['PTT', 'IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER', 'PTV']) of
+        0: Extensao_Documento := 'mp3';
+        1: Extensao_Documento := 'jpg';
+        2: Extensao_Documento := 'mp4';
+        3: Extensao_Documento := 'mp3';
+        4:
+        begin
+          Extensao_Documento := ExtractFileExt(Response.Msgs[m].filename);
+          Extensao_Documento := Copy(Extensao_Documento,2,length(Extensao_Documento));
+        end;
+        5: Extensao_Documento := 'jpg'; //'webp';
+        6: Extensao_Documento := 'mp4'; //Instant Vídeo
+      end;
+
+      Automato_Path := ExtractFilePath(ParamStr(0));
+
+      //Download
+      {NomeArq_Whats := WPPConnectDecrypt.download(Response.Msgs[m].deprecatedMms3Url,
+                      Response.Msgs[m].mediaKey, Extensao_Documento, Response.Msgs[m].id, Automato_Path + 'Temp\');}
+    end;
+
+    //Mensagem Origem
+    if Assigned(Response.Msgs[m].quotedMsg) then
+    begin
+      quotedMsg_caption := Response.Msgs[m].quotedMsg.Caption;
+      if Trim(quotedMsg_caption) = '' then
+        if Assigned(Response.Msgs[m].quotedMsg.list) then
+          quotedMsg_caption := Response.Msgs[m].quotedMsg.list.description;
+      if Trim(quotedMsg_caption) = '' then
+        quotedMsg_caption := Response.Msgs[m].quotedMsg.Body;
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('quotedMsg.caption: ' + quotedMsg_caption);
+      IdMensagemOrigem := 'true_' + Response.Msgs[m].id.remote+'_' + Response.Msgs[m].quotedStanzaID;
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Unique id Origem: ' + IdMensagemOrigem);
+    end;
+
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.add('');
   end;
 
+end;
 
+procedure TfrDemo.TWPPConnect1Getmsg_EditedEvento(const MsgEdited: TEditedClass);
+var
+  wlo_Celular, quotedMsg_caption : string;
+begin
+
+  //wlo_Celular := Copy(MsgEdited.msg.chat,1,  pos('@', MsgEdited.msg.chat) -1); // nr telefone
+  wlo_Celular := Copy(MsgEdited.msg.msg.from,1,  pos('@', MsgEdited.msg.msg.from) -1); // nr telefone
+  //ShowMessage('body: ' + AnsiUpperCase(MsgEdited.msg.body) + ' Número WhatsApp: ' + wlo_Celular);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('');
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Evento Msg Edited');
+  {if MsgEdited.msg.id.fromMe then
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('fromMe: True') else
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('fromMe: False');}
+
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Nome Contato: ' + Trim(MsgEdited.msg.msg.notifyName));
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Número WhatsApp: ' + wlo_Celular);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('msg Edit body: ' + AnsiUpperCase(MsgEdited.msg.msg.body));
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Unique id: ' + MsgEdited.msg.msg.id._serialized);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Type: ' + MsgEdited.msg.msg.&type);
+
+  if Assigned(MsgEdited.msg.msg.quotedMsg) then
+  begin
+    quotedMsg_caption := MsgEdited.msg.msg.quotedMsg.Caption;
+    if Trim(quotedMsg_caption) = '' then
+      if Assigned(MsgEdited.msg.msg.quotedMsg.list) then
+        quotedMsg_caption := MsgEdited.msg.msg.quotedMsg.list.description;
+    if Trim(quotedMsg_caption) = '' then
+      quotedMsg_caption := MsgEdited.msg.msg.quotedMsg.Body;
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('quotedMsg.caption: ' + quotedMsg_caption);
+
+  end;
+
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('');
+
+end;
+
+procedure TfrDemo.TWPPConnect1Getmsg_revokeEvento(const RevokeMsg: TRevokeClass);
+var
+  wlo_Celular : string;
+begin
+  wlo_Celular := Copy(RevokeMsg.msg.from,1,  pos('@', RevokeMsg.msg.from) -1); // nr telefone
+  //ShowMessage('body: ' + AnsiUpperCase(ReactionResponse.msg.body) + ' Número WhatsApp: ' + wlo_Celular);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('');
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Mensagem Apagada');
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Número WhatsApp: ' + wlo_Celular);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Frome: ' + AnsiUpperCase(RevokeMsg.msg.refId.fromMe.ToString()));
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Unique id Origem: ' + RevokeMsg.msg.refId._serialized);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('');
+end;
+
+procedure TfrDemo.TWPPConnect1GetMyContactsList(const MyContacts: TRetornoAllContacts);
+var
+  AContact: uTWPPConnect.Classes.TContactClass;
+  wlo_AuxNome: string;
+begin
+
+  frameMensagem1.listaContatos.Clear;
+  for AContact in MyContacts.Result do
+  begin
+    wlo_AuxNome := AContact.name;
+    if Trim(wlo_AuxNome) = '' then
+      wlo_AuxNome := AContact.formattedName;
+    AddContactList(AContact.id + ' - ' + wlo_AuxNome);
+  end;
+  AContact := nil;
 end;
 
 procedure TfrDemo.TWPPConnect1GetMyNumber(Sender: TObject);
@@ -1362,6 +1752,8 @@ begin
   frameLogin1.lblStatus.Font.Color := $0000AE11;
   frameLogin1.SpeedButton3.Enabled := True;
   frameLogin1.whatsOn.Visible := True;
+  frameLogin1.whatsOff.Visible := False;
+  frameLogin1.imgQrCode.Picture := nil;
   ctbtn.Enabled := True;
 
   //Marcelo 06/02/2023
@@ -1379,6 +1771,277 @@ begin
     lblMeuNumero.Caption := 'Meu número: ' + TWPPConnect1.MyNumber;
   end;
 end;
+procedure TfrDemo.TWPPConnect1GetNewMessageResponseEvento(const NewMessageResponse: TNewMessageResponseClass);
+var
+  wlo_Celular : string;
+  contato, telefone, selectedButtonId, quotedMsg_caption, selectedRowId, IdMensagemOrigem,
+    Extensao_Documento, NomeArq_Whats, Automato_Path: string;
+  WPPConnectDecrypt: TWPPConnectDecryptFile;
+  Question, Answer, phoneNumber, FChatID, quotedMsg_body, S_Type_origem, DescricaoLista, foto_perfil : string;
+  From, idMensagem, body, S_Caption, S_type, filename, mediakey, mimeType, deprecatedMms3Url, Title, Footer: string;
+  ChatGroup, mensagemDuplicada, eh_arquivo, isGif : Boolean;
+  latitude, longitude, localidade, base64localidade : String;
+  ack: extended;
+  I: Integer;
+begin
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Evento NewMessage ');
+
+  if (NewMessageResponse.msg.id.remote = 'status@broadcast') then
+  begin
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.add('status@broadcast');
+
+  end
+  else
+  if (pos('@newsletter', NewMessageResponse.msg.id.remote) > 0) then
+  begin
+    //Canais
+    frameMensagensRecebidas1.memo_unReadMessage.Lines.add('newsletter: ' + NewMessageResponse.msg.id.remote);
+  end
+  else
+  begin
+    if not NewMessageResponse.msg.isGroup then //CHAT USER
+    begin
+      FChatID := NewMessageResponse.msg.from;
+      TWPPConnect1.ReadMessages(FChatID);
+      wlo_Celular := Copy(NewMessageResponse.msg.from,1,  pos('@', NewMessageResponse.msg.from) -1); // nr telefone
+
+      if NewMessageResponse.msg.id.fromMe then //Foi Enviado por Mim está Mensagem / This message was sent by me
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('fromMe: True') else
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('fromMe: False');
+
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Nome Contato: ' + Trim(NewMessageResponse.msg.notifyName));
+
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Number WhatsApp: ' + wlo_Celular);
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('body: ' + AnsiUpperCase(NewMessageResponse.msg.body));
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Unique id: ' + NewMessageResponse.msg.id._serialized);
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Type: ' + NewMessageResponse.msg.&type);
+
+      S_Type := NewMessageResponse.msg.&type;
+
+      if Assigned(NewMessageResponse.msg.quotedMsg) then
+      begin
+        quotedMsg_caption := NewMessageResponse.msg.quotedMsg.Caption;
+        if Trim(quotedMsg_caption) = '' then
+          if Assigned(NewMessageResponse.msg.quotedMsg.list) then
+          begin
+            quotedMsg_caption := NewMessageResponse.msg.quotedMsg.list.description;
+            //IdMensagemOrigem := NewMessageResponse.msg.quotedMsg.list.id._serialized;
+          end;
+
+        if Trim(quotedMsg_caption) = '' then
+          quotedMsg_caption := NewMessageResponse.msg.quotedMsg.Body;
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('quotedMsg.caption: ' + quotedMsg_caption);
+
+
+        //Obter o Unique ID de Origem
+        if Assigned(NewMessageResponse.msg.quotedMsg.id) then
+          IdMensagemOrigem := NewMessageResponse.msg.quotedMsg.id._serialized
+        else
+        begin
+          if NewMessageResponse.msg.quotedParticipant <> NewMessageResponse.msg.from then
+            IdMensagemOrigem := 'true_' + NewMessageResponse.msg.quotedParticipant + '_' + NewMessageResponse.msg.quotedStanzaID
+          else
+          if NewMessageResponse.msg.author <> '' then
+          begin
+            if NewMessageResponse.msg.quotedParticipant <> NewMessageResponse.msg.author then
+              IdMensagemOrigem := 'false_' + NewMessageResponse.msg.quotedParticipant + '_' + NewMessageResponse.msg.quotedStanzaID else
+              IdMensagemOrigem := 'true_' + NewMessageResponse.msg.quotedParticipant + '_' + NewMessageResponse.msg.quotedStanzaID;
+          end
+          else
+            IdMensagemOrigem := 'false_' + NewMessageResponse.msg.quotedParticipant + '_' + NewMessageResponse.msg.quotedStanzaID;
+        end;
+
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('IdMensagemOrigem: ' + IdMensagemOrigem);
+
+      end;
+
+      ack := 3;
+
+      S_Caption := NewMessageResponse.msg.caption;
+
+      // Tratando o tipo do arquivo recebido e faz o download para pasta \temp
+      case AnsiIndexStr(UpperCase(S_Type), ['PTT', 'IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER', 'PTV']) of
+        0: Extensao_Documento := 'mp3';
+        1: Extensao_Documento := 'jpg';
+        2: Extensao_Documento := 'mp4';
+        3: Extensao_Documento := 'mp3';
+        4:
+        begin
+          Extensao_Documento := ExtractFileExt(NewMessageResponse.msg.filename);
+          Extensao_Documento := Copy(Extensao_Documento,2,length(Extensao_Documento));
+        end;
+        5: Extensao_Documento := 'jpg'; //'webp';
+        6: Extensao_Documento := 'mp4'; //Instant Vídeo
+      end;
+
+      Automato_Path := ExtractFilePath(ParamStr(0));
+      filename := NewMessageResponse.msg.filename;
+      mediaKey := NewMessageResponse.msg.mediaKey;
+      mimetype := NewMessageResponse.msg.mimetype;
+      deprecatedMms3Url := NewMessageResponse.msg.DeprecatedMms3Url;
+      latitude := '';
+      longitude := '';
+      base64localidade := '';
+
+      if NewMessageResponse.msg.lat <> 0 then
+        latitude := FloatToStr(NewMessageResponse.msg.lat);
+
+      if NewMessageResponse.msg.lng <> 0 then
+        longitude := FloatToStr(NewMessageResponse.msg.lng);
+
+      if NewMessageResponse.msg.loc <> '' then
+        localidade := NewMessageResponse.msg.loc;
+
+      if latitude <> '' then
+        base64localidade := Body;
+
+      eh_arquivo := False;
+
+      if Extensao_Documento <> '' then
+      begin
+        eh_arquivo := True;
+
+        NomeArq_Whats := WPPConnectDecrypt.download(deprecatedMms3Url,
+                        mediaKey, Extensao_Documento, wlo_Celular, Automato_Path + 'Temp\');
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('NomeArq_Whats: ' + Trim(NomeArq_Whats)));
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('Caption: ' + Trim(S_Caption)));
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('Filename: ' + Trim(filename)));
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('mediakey: ' + Trim(mediaKey)));
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('mimetype: ' + Trim(mimetype)));
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('deprecatedMms3Url: ' + Trim(deprecatedMms3Url)));
+      end;
+
+      TWPPConnect1.ReadMessages(FChatID);
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('');
+
+      {ProcessaMsgNaoLida(FChatID, From, idMensagem, '', '', contato,
+        body, S_Caption, Title, Footer, DescricaoLista,
+        filename, S_Type, eh_arquivo,
+        mediaKey, deprecatedMms3Url, mimetype,
+        foto_perfil, IdMensagemOrigem, quotedMsg_caption, quotedMsg_body, S_Type_origem, ack, isGif,
+        latitude, longitude, localidade, base64localidade, idGrupo, NomeGrupo);}
+    end
+    else
+    begin //GROUP
+      FChatID := NewMessageResponse.msg.from;
+      TWPPConnect1.ReadMessages(NewMessageResponse.msg.id.remote);
+
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Name Group: ' + Trim(NewMessageResponse.msg.formattedTitle));
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('id Group: ' + Trim(NewMessageResponse.msg.id.remote));
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('participant: ' + Trim(NewMessageResponse.msg.id.participant));
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Name participant: ' + Trim(NewMessageResponse.msg.notifyName));
+
+      wlo_Celular := Copy(NewMessageResponse.msg.author,1,  pos('@', NewMessageResponse.msg.author) -1); // nr telefone
+
+      //ShowMessage('body: ' + AnsiUpperCase(NewMessageResponse.msg.body) + ' Número WhatsApp: ' + wlo_Celular);
+
+      if NewMessageResponse.msg.id.fromMe then
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('fromMe: True') else
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('fromMe: False');
+
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('body: ' + AnsiUpperCase(NewMessageResponse.msg.body));
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Unique id: ' + NewMessageResponse.msg.id._serialized);
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Type: ' + NewMessageResponse.msg.&type);
+
+      S_Type := NewMessageResponse.msg.&type;
+
+      if Assigned(NewMessageResponse.msg.quotedMsg) then
+      begin
+        quotedMsg_caption := NewMessageResponse.msg.quotedMsg.Caption;
+        if Trim(quotedMsg_caption) = '' then
+          if Assigned(NewMessageResponse.msg.quotedMsg.list) then
+            quotedMsg_caption := NewMessageResponse.msg.quotedMsg.list.description;
+        if Trim(quotedMsg_caption) = '' then
+          quotedMsg_caption := NewMessageResponse.msg.quotedMsg.Body;
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('quotedMsg.caption: ' + quotedMsg_caption);
+
+        //IdMensagemOrigem := 'true_' + NewMessageResponse.msg.from + '_' + NewMessageResponse.msg.quotedStanzaID;
+
+        //Obter o Unique ID de Origem
+        if Assigned(NewMessageResponse.msg.quotedMsg.id) then
+          IdMensagemOrigem := NewMessageResponse.msg.quotedMsg.id._serialized
+        else
+        begin
+          if NewMessageResponse.msg.quotedParticipant <> NewMessageResponse.msg.from then
+            IdMensagemOrigem := 'true_' + NewMessageResponse.msg.quotedParticipant + '_' + NewMessageResponse.msg.quotedStanzaID
+          else
+          if NewMessageResponse.msg.author <> '' then
+          begin
+            if NewMessageResponse.msg.quotedParticipant <> NewMessageResponse.msg.author then
+              IdMensagemOrigem := 'false_' + NewMessageResponse.msg.quotedParticipant + '_' + NewMessageResponse.msg.quotedStanzaID else
+              IdMensagemOrigem := 'true_' + NewMessageResponse.msg.quotedParticipant + '_' + NewMessageResponse.msg.quotedStanzaID;
+          end
+          else
+            IdMensagemOrigem := 'false_' + NewMessageResponse.msg.quotedParticipant + '_' + NewMessageResponse.msg.quotedStanzaID;
+        end;
+
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('IdMensagemOrigem: ' + IdMensagemOrigem);
+      end;
+
+      ack := 3;
+
+      S_Caption := NewMessageResponse.msg.caption;
+
+      // Tratando o tipo do arquivo recebido e faz o download para pasta \temp
+      case AnsiIndexStr(UpperCase(S_Type), ['PTT', 'IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER', 'PTV']) of
+        0: Extensao_Documento := 'mp3';
+        1: Extensao_Documento := 'jpg';
+        2: Extensao_Documento := 'mp4';
+        3: Extensao_Documento := 'mp3';
+        4:
+        begin
+          Extensao_Documento := ExtractFileExt(NewMessageResponse.msg.filename);
+          Extensao_Documento := Copy(Extensao_Documento,2,length(Extensao_Documento));
+        end;
+        5: Extensao_Documento := 'jpg'; //'webp';
+        6: Extensao_Documento := 'mp4'; //Instant Vídeo
+      end;
+
+      Automato_Path := ExtractFilePath(ParamStr(0));
+      filename := NewMessageResponse.msg.filename;
+      mediaKey := NewMessageResponse.msg.mediaKey;
+      mimetype := NewMessageResponse.msg.mimetype;
+      deprecatedMms3Url := NewMessageResponse.msg.DeprecatedMms3Url;
+      latitude := '';
+      longitude := '';
+      base64localidade := '';
+
+      if NewMessageResponse.msg.lat <> 0 then
+        latitude := FloatToStr(NewMessageResponse.msg.lat);
+
+      if NewMessageResponse.msg.lng <> 0 then
+        longitude := FloatToStr(NewMessageResponse.msg.lng);
+
+      if NewMessageResponse.msg.loc <> '' then
+        localidade := NewMessageResponse.msg.loc;
+
+      if latitude <> '' then
+        base64localidade := Body;
+
+      eh_arquivo := False;
+
+      if Extensao_Documento <> '' then
+      begin
+        eh_arquivo := True;
+
+        NomeArq_Whats := WPPConnectDecrypt.download(deprecatedMms3Url,
+                        mediaKey, Extensao_Documento, wlo_Celular, Automato_Path + 'Temp\');
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('NomeArq_Whats: ' + Trim(NomeArq_Whats)));
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('Caption: ' + Trim(S_Caption)));
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('Filename: ' + Trim(filename)));
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('mediakey: ' + Trim(mediaKey)));
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('mimetype: ' + Trim(mimetype)));
+        frameMensagensRecebidas1.memo_unReadMessage.Lines.add(PChar('deprecatedMms3Url: ' + Trim(deprecatedMms3Url)));
+      end;
+      TWPPConnect1.ReadMessages(FChatID);
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('');
+    end;
+  end;
+
+
+
+end;
+
 procedure TfrDemo.TWPPConnect1GetPlatformFromMessage(const PlatformFromMessage: TPlatformFromMessage);
 var
   wlo_Celular : string;
@@ -1389,6 +2052,48 @@ begin
   frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Número WhatsApp: ' + wlo_Celular);
   frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Plataforma: ' + AnsiUpperCase(PlatformFromMessage.platform));
   frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Unique id: ' + PlatformFromMessage.IdMensagem);
+end;
+
+procedure TfrDemo.TWPPConnect1GetPoolResponse(const PoolResponse: TPoolResponseClass);
+var
+  wlo_Celular : string;
+  m: Integer;
+begin
+  wlo_Celular := Copy(PoolResponse.msg.chatId,1,  pos('@', PoolResponse.msg.chatId) -1); // nr telefone
+  //ShowMessage('Plataforma: ' + AnsiUpperCase(PoolResponse.platform) + ' Número WhatsApp: ' + wlo_Celular);
+
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Número WhatsApp: ' + wlo_Celular);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Unique id: ' + PoolResponse.msg.msgId._serialized);
+
+  for m := 0 to Length(PoolResponse.msg.selectedOptions) -1 do
+  begin
+    try
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Nome Opção: ' + AnsiUpperCase(PoolResponse.msg.selectedOptions[m].name));
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Local id: ' + PoolResponse.msg.selectedOptions[m].localId.toString);
+    except on E: Exception do
+    end;
+  end;
+end;
+
+procedure TfrDemo.TWPPConnect1GetPoolResponseEvento(const PoolResponse: TPoolResponseClass);
+var
+  wlo_Celular : string;
+  m: Integer;
+begin
+  wlo_Celular := Copy(PoolResponse.msg.chatId,1,  pos('@', PoolResponse.msg.chatId) -1); // nr telefone
+  //ShowMessage('Plataforma: ' + AnsiUpperCase(PoolResponse.platform) + ' Número WhatsApp: ' + wlo_Celular);
+
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Número WhatsApp: ' + wlo_Celular);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Unique id: ' + PoolResponse.msg.msgId._serialized);
+
+  for m := 0 to Length(PoolResponse.msg.selectedOptions) -1 do
+  begin
+    try
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Nome Opção: ' + AnsiUpperCase(PoolResponse.msg.selectedOptions[m].name));
+      frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Local id: ' + PoolResponse.msg.selectedOptions[m].localId.toString);
+    except on E: Exception do
+    end;
+  end;
 end;
 
 procedure TfrDemo.TWPPConnect1GetProfilePicThumb(Sender: TObject; ProfilePicThumb: TResponseGetProfilePicThumb);
@@ -1444,10 +2149,10 @@ begin
 end;
 procedure TfrDemo.TWPPConnect1GetQrCodeDesconectouErroCache(const QrCodeDesconectouErroCache: TQrCodeDesconectouErroCache);
 begin
-  Count_QrCodeDesconectouErroCache := Count_QrCodeDesconectouErroCache + 1;
-
-  if not TDirectory.Exists(ExtractFilePath(Application.ExeName) + 'bck_cache/') then
+  if TDirectory.Exists(ExtractFilePath(Application.ExeName) + 'bck_cache/') then
   begin
+    Count_QrCodeDesconectouErroCache := Count_QrCodeDesconectouErroCache + 1;
+
     frameLogin1.lblStatus.Caption := 'Offline';
     frameLogin1.lblStatus.Font.Color := $002894FF;
     frameLogin1.lblStatus.Font.Color := clGrayText;
@@ -1455,7 +2160,7 @@ begin
     frameLogin1.whatsOn.Visible := False;
     frameLogin1.SpeedButton3.Enabled := True;
 
-    if Count_QrCodeDesconectouErroCache > 1 then
+    if (Count_QrCodeDesconectouErroCache > 3) then
     begin
       Label3.Caption := 'Desconectou Erro na Pasta Cache';
       ShowMessage('Desconectou Erro na Pasta Cache' + #13#10#13#10 + ' Restaure a Pasta de Backup ou ' + #13#10 + 'Faça uma nova Leitura do Qrcode');
@@ -1463,6 +2168,19 @@ begin
     end;
 
   end;
+end;
+
+procedure TfrDemo.TWPPConnect1GetReactResponseEvento(const ReactionResponse: TReactionResponseClass);
+var
+  wlo_Celular : string;
+begin
+  wlo_Celular := Copy(ReactionResponse.msg.sender,1,  pos('@', ReactionResponse.msg.sender) -1); // nr telefone
+  //ShowMessage('body: ' + AnsiUpperCase(ReactionResponse.msg.body) + ' Número WhatsApp: ' + wlo_Celular);
+
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Número WhatsApp: ' + wlo_Celular);
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Reaction: ' + AnsiUpperCase(ReactionResponse.msg.reactionText));
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.add('Unique id Origem: ' + ReactionResponse.msg.msgId._serialized + #13#10);
+
 end;
 
 procedure TfrDemo.TWPPConnect1GetStatus(Sender: TObject);
@@ -1487,7 +2205,9 @@ begin
   StatusBar1.Panels[1].Text := frameLogin1.lblStatus.Caption;
   // whatsOn.Visible            := SpeedButton3.enabled;
   // lblNumeroConectado.Visible := whatsOn.Visible;
-  frameLogin1.whatsOff.Visible := Not frameLogin1.whatsOn.Visible;
+  //frameLogin1.whatsOff.Visible := Not frameLogin1.whatsOn.Visible;
+
+
   if frameLogin1.whatsOn.Visible then
   begin
     ctbtn.Categories.Items[0].Items[0].ImageIndex := 0;
@@ -1561,6 +2281,11 @@ begin
     ShowMessage(Result.id + ' - ' + Result.status);
   end;
 end;
+procedure TfrDemo.TWPPConnect1GetTotalChatsUserRead(const TotalChatsUserRead: TTotalChatsUserRead);
+begin
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('TotalChatsUserRead: ' + TotalChatsUserRead.totalchats.ToString);
+end;
+
 procedure TfrDemo.TWPPConnect1GetUnReadMessages(const Chats: TChatList);
 var
   AChat: TChatClass;
@@ -1568,9 +2293,9 @@ var
   contato, telefone, selectedButtonId, quotedMsg_caption, selectedRowId, IdMensagemOrigem,
     Extensao_Documento, NomeArq_Whats, Automato_Path: string;
   WPPConnectDecrypt: TWPPConnectDecryptFile;
-  Question, Answer, phoneNumber : string;
-  x, i : Integer;
-  mensagemDuplicada: Boolean;
+  Question, Answer, phoneNumber, vSender : string;
+  x, i, m, a : Integer;
+  mensagemDuplicada, ChatGroup: Boolean;
 begin
   for AChat in Chats.Result do
   begin
@@ -1578,184 +2303,251 @@ begin
     //for AMessage in AChat.Messages do
     begin
       AMessage := AChat.Messages[x];
-      if not AChat.isGroup then // Não exibe mensages de grupos
+      vSender := Copy(AMessage.from, 1 , Pos('@', AMessage.from) - 1);
+
+      //frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Sender: ' + vSender);
+
+      ChatGroup := pos('@g.us', AChat.id) > 0;
+      if  (ChatGroup = False) then
+      //if (AChat.isGroup = False)  then // Não exibe mensages de grupos
       begin
-        if not AMessage.Sender.isMe then // Não exibe mensages enviadas por mim
+        //if (not AMessage.Sender.isMe) then
+        if (AnsiUpperCase(AMessage.&type) <> 'CIPHERTEXT')
+        and (AnsiUpperCase(AMessage.&type) <> 'E2E_NOTIFICATION')
+        and (AnsiUpperCase(AMessage.&type) <> 'GP2')
+        and (AnsiUpperCase(AMessage.&type) <> 'PROTOCOL')
+        then //Ignorar Mensagem
         begin
-          // memo_unReadMessage.Clear;
-          FChatID := AChat.id;
-          telefone := Copy(AChat.id, 3, Pos('@', AChat.id) - 3);
-          contato := AMessage.Sender.pushname;
-
-          for I := 0 to 29 do
+          //if (vSender <> SomenteNumero(TWPPConnect1.MyNumber) ) then // Não exibe mensages enviadas por mim
+          //if AMessage.Sender.isMe then
+          if not AMessage.fromMe then
           begin
-            if MensagensArray[I] = AMessage.id then
+            // memo_unReadMessage.Clear;
+            FChatID := AChat.id;
+            telefone := Copy(AChat.id, 3, Pos('@', AChat.id) - 3);
+            contato := AMessage.Sender.pushname;
+
+            for I := 0 to 29 do
             begin
-              mensagemDuplicada := True;
-              //Forçar Marcar como Lida
-              TWPPConnect1.ReadMessages(AChat.id);
-              Break;
-            end;
-          end;
-
-
-          //AVALIAR MSG JÁ EM MEMÓRIA
-          if not (mensagemDuplicada) then
-          begin
-            if iPosicaoMsgArray <= 29 then
-            begin
-              MensagensArray[iPosicaoMsgArray] := AMessage.id;
-              iPosicaoMsgArray := iPosicaoMsgArray + 1;
-            end
-            else
-            begin
-              iPosicaoMsgArray := 0;
-              MensagensArray[iPosicaoMsgArray] := AMessage.id;
-            end;
-
-            Question := AMessage.body;
-
-            // Tratando o tipo do arquivo recebido e faz o download para pasta \temp
-            case AnsiIndexStr(UpperCase(AMessage.&type), ['PTT', 'IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER']) of
-              0: Extensao_Documento := 'mp3';
-              1: Extensao_Documento := 'jpg';
-              2: Extensao_Documento := 'mp4';
-              3: Extensao_Documento := 'mp3';
-              4:
+              if MensagensArray[I] = AMessage.id then
               begin
-                Extensao_Documento := ExtractFileExt(AMessage.filename);
-                Extensao_Documento := Copy(Extensao_Documento,2,length(Extensao_Documento));
+                mensagemDuplicada := True;
+                //Forçar Marcar como Lida
+                TWPPConnect1.ReadMessages(AChat.id);
+                Break;
               end;
-              5: Extensao_Documento := 'jpg'; //'webp';
             end;
-            //Novo 05/11/2022
-            Automato_Path := ExtractFilePath(ParamStr(0));
 
-            NomeArq_Whats := WPPConnectDecrypt.download(AMessage.deprecatedMms3Url,
-                            AMessage.mediaKey, Extensao_Documento, AChat.id, Automato_Path + 'Temp\');
 
-            SleepNoFreeze(100);
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Nome Contato: ' + Trim(AMessage.Sender.pushname)));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('UniqueID: ' + AMessage.id));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Tipo mensagem: ' + AMessage.&type));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Chat Id: ' + AChat.id));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(StringReplace(AMessage.body, #$A, #13#10,[rfReplaceAll, rfIgnoreCase]));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('ACK: ' + FloatToStr(AMessage.ack)));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('NomeArq_Whats: ' + Trim(NomeArq_Whats)));
+            //AVALIAR MSG JÁ EM MEMÓRIA
+            if not (mensagemDuplicada) then
+            begin
+              if iPosicaoMsgArray <= 29 then
+              begin
+                MensagensArray[iPosicaoMsgArray] := AMessage.id;
+                iPosicaoMsgArray := iPosicaoMsgArray + 1;
+              end
+              else
+              begin
+                iPosicaoMsgArray := 0;
+                MensagensArray[iPosicaoMsgArray] := AMessage.id;
+              end;
+
+              Question := AMessage.body;
+
+              // Tratando o tipo do arquivo recebido e faz o download para pasta / Treating the type of file received and downloading it to the folder \temp
+              case AnsiIndexStr(UpperCase(AMessage.&type), ['PTT', 'IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER', 'PTV']) of
+                0: Extensao_Documento := 'mp3';
+                1: Extensao_Documento := 'jpg';
+                2: Extensao_Documento := 'mp4';
+                3: Extensao_Documento := 'mp3';
+                4:
+                begin
+                  Extensao_Documento := ExtractFileExt(AMessage.filename);
+                  Extensao_Documento := Copy(Extensao_Documento,2,length(Extensao_Documento));
+                end;
+                5: Extensao_Documento := 'jpg'; //'webp';
+                6: Extensao_Documento := 'mp4'; //Instant Vídeo
+              end;
+              //Novo 05/11/2022
+              Automato_Path := ExtractFilePath(ParamStr(0));
+
+              NomeArq_Whats := WPPConnectDecrypt.download(AMessage.deprecatedMms3Url,
+                              AMessage.mediaKey, Extensao_Documento, AChat.id, Automato_Path + 'Temp\');
+
+              SleepNoFreeze(100);
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Nome Contato: ' + Trim(AChat.Contact.pushname)));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('UniqueID: ' + AMessage.id));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Tipo mensagem: ' + AMessage.&type));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Chat Id: ' + AChat.id));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(StringReplace(AMessage.body, #$A, #13#10,[rfReplaceAll, rfIgnoreCase]));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('ACK: ' + FloatToStr(AMessage.ack)));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('NomeArq_Whats: ' + Trim(NomeArq_Whats)));
+
+              if AMessage.loc <> '' then
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('loc: ' + AMessage.loc));
+              if AMessage.lat <> 0 then
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('latitude: ' + FloatToStr(AMessage.lat)));
+              if AMessage.lng <> 0 then
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('longitude: ' + FloatToStr(AMessage.lng)));
+
+              selectedButtonId := AMessage.selectedButtonId;
+              try
+                if Assigned(AMessage.ListResponse) then
+                  if Assigned(AMessage.ListResponse.singleSelectReply) then
+                  begin
+                    selectedRowId := AMessage.ListResponse.singleSelectReply.selectedRowId;
+                    if selectedRowId <> '' then
+                      frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('selectedRowId: ' + selectedRowId));
+                  end;
+              except on E: Exception do
+              end;
+              try
+                if Assigned(AMessage.quotedMsg) then
+                begin
+                  quotedMsg_caption := AMessage.quotedMsg.Caption;
+                  if Trim(quotedMsg_caption) = '' then
+                    if Assigned(AMessage.quotedMsg.list) then
+                      quotedMsg_caption := AMessage.quotedMsg.list.description;
+                  if Trim(quotedMsg_caption) = '' then
+                    quotedMsg_caption := AMessage.quotedMsg.Body;
+                  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('quotedMsg.caption: ' + quotedMsg_caption);
+                end;
+                // Mensagem Original do Click do Botão
+              except
+                on E: Exception do
+                  quotedMsg_caption := '';
+              end;
+              //Marcelo 25/07/2022 Unique ID Mensagem Origem
+              try
+                if Assigned(AMessage.quotedMsgObj) then
+                begin
+                  IdMensagemOrigem := AMessage.quotedMsgObj.id ;
+                  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Unique ID IdMensagemOrigem: ' + IdMensagemOrigem);
+                end;
+              except
+                on E: Exception do
+                  IdMensagemOrigem := '';
+              end;
+
+
+              if Trim(IdMensagemOrigem) = '' then
+              begin
+                //true_5517981388414@c.us_3EB03311EAF126392DBAF7
+                if Trim(AMessage.quotedStanzaID) <> '' then
+                begin
+                  IdMensagemOrigem :=  'true_' + AMessage.from + '_' + AMessage.quotedStanzaID;
+                  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Unique ID IdMensagemOrigem: ' + IdMensagemOrigem);
+                end;
+              end;
+
+              if Assigned(AMessage.CardList) then
+              begin
+                for a := 0 to Length(AMessage.CardList) -1 do
+                begin
+                  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('displayName: ' + AMessage.CardList[a].displayName);
+                  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('vCard: ' + AMessage.CardList[a].vCard);
+                end;
+              end;
+
+              if selectedButtonId = '' then
+                selectedButtonId := AMessage.selectedId;
+              if selectedButtonId <> '' then
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('selectedId: ' + selectedButtonId));
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar(''));
+
+              if Assigned(AChat.contact) then
+                frameMensagensRecebidas1.ed_profilePicThumbURL.Text := AChat.contact.profilePicThumb;
+
+              if frameMensagensRecebidas1.ed_profilePicThumbURL.Text <> '' then
+                TWPPConnect1.getProfilePicThumb(AChat.id);
+                //GetImagemProfile(AChat.contact.profilePicThumb, AChat.id);
+
+              //Marcar Mensagem como Lida
+              TWPPConnect1.ReadMessages(AChat.id);
+
+              //Marcar Audio como Escutado
+              if (UpperCase(AMessage.&type) = 'AUDIO') or (UpperCase(AMessage.&type) = 'PTT') then
+                TWPPConnect1.markPlayed(AMessage.id);
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.add('');
+
+              // if frameMensagensRecebidas1.chk_AutoResposta.Checked then
+              // VerificaPalavraChave(AMessage.body, '', telefone, contato);
+
+              if SwtChatGPT.IsOn then
+              begin
+                if Question <> '' then
+                begin
+                  //Créditos --> https://github.com/landgraf-dev/openai-delphi
+                  Answer := AskQuestion(Question, AChat.id);
+                  phoneNumber := Copy(Answer, 1, pos('#', Answer)-1);
+                  Answer := StringReplace(Answer, phoneNumber + '#', '',[]);
+
+                  if Trim(Answer) <> '' then
+                    frDemo.TWPPConnect1.SendTextMessageEx(phoneNumber, TWPPConnectEmoticons.robot + ' *ChatGPT* ' + Answer, 'createChat: true', '123')
+                    //frDemo.TWPPConnect1.SendTextMessageEx(frameMensagem1.ed_num.Text, 'Escreva sua Perguanta?', options, '123')
+                  else
+                    frDemo.TWPPConnect1.SendTextMessageEx(phoneNumber, TWPPConnectEmoticons.robot + ' *ChatGPT* ' + 'Could not retrieve an answer.', 'createChat: true', '123');
+
+                end;
+              end;
+
+            end;
+          end
+          else
+          begin
+            {if Assigned(AChat.chatlistPreview) then
+            begin
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Reação: ' + AChat.chatlistPreview.reactionText);
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('  Sender: ' + AChat.chatlistPreview.sender);
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('  msgKey: ' + AChat.chatlistPreview.msgKey);
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('  parentMsgKey: ' + AChat.chatlistPreview.parentMsgKey);
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(' ');
+            end;}
+
+            {frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(PChar('Nome Contato: ' + Trim(AMessage.Sender.pushname)));
+            frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(PChar('UniqueID: ' + AMessage.id));
+            frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(PChar('Tipo mensagem: ' + AMessage.&type));
+            frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(PChar('Chat Id: ' + AChat.id));
+            frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(StringReplace(AMessage.body, #$A, #13#10,[rfReplaceAll, rfIgnoreCase]));
+            frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(PChar('ACK: ' + FloatToStr(AMessage.ack)));
 
             selectedButtonId := AMessage.selectedButtonId;
             try
-              if Assigned(AMessage.ListResponse) then
-                if Assigned(AMessage.ListResponse.singleSelectReply) then
-                begin
-                  selectedRowId := AMessage.ListResponse.singleSelectReply.selectedRowId;
-                  if selectedRowId <> '' then
-                    frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('selectedRowId: ' + selectedRowId));
-                end;
-            except on E: Exception do
-            end;
-            try
-              if Assigned(AMessage.quotedMsg) then
-              begin
-                quotedMsg_caption := AMessage.quotedMsg.Caption;
-                if Trim(quotedMsg_caption) = '' then
-                  if Assigned(AMessage.quotedMsg.list) then
-                    quotedMsg_caption := AMessage.quotedMsg.list.description;
-                if Trim(quotedMsg_caption) = '' then
-                  quotedMsg_caption := AMessage.quotedMsg.Body;
-                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('quotedMsg.caption: ' + quotedMsg_caption);
-              end;
+              quotedMsg_caption := AMessage.quotedMsg.Caption;
               // Mensagem Original do Click do Botão
             except
               on E: Exception do
                 quotedMsg_caption := '';
             end;
-            //Marcelo 25/07/2022 Unique ID Mensagem Origem
-            try
-              if Assigned(AMessage.quotedMsgObj) then
-              begin
-                IdMensagemOrigem := AMessage.quotedMsgObj.id ;
-                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Unique ID IdMensagemOrigem: ' + IdMensagemOrigem);
-              end;
-            except
-              on E: Exception do
-                IdMensagemOrigem := '';
-            end;
             if selectedButtonId = '' then
-              selectedButtonId := AMessage.selectedId;
-            if selectedButtonId <> '' then
-              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('selectedId: ' + selectedButtonId));
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar(''));
-            frameMensagensRecebidas1.ed_profilePicThumbURL.Text := AChat.contact.profilePicThumb;
-            if frameMensagensRecebidas1.ed_profilePicThumbURL.Text <> '' then
-              TWPPConnect1.getProfilePicThumb(AChat.id);
-              //GetImagemProfile(AChat.contact.profilePicThumb, AChat.id);
+              selectedButtonId := AMessage.selectedId;}
 
-            //Marcar Mensagem como Lida
-            TWPPConnect1.ReadMessages(AChat.id);
-
-            //Marcar Audio como Escutado
-            if (UpperCase(AMessage.&type) = 'AUDIO') or (UpperCase(AMessage.&type) = 'PTT') then
-              TWPPConnect1.markPlayed(AMessage.id);
-
-
-
-            // if frameMensagensRecebidas1.chk_AutoResposta.Checked then
-            // VerificaPalavraChave(AMessage.body, '', telefone, contato);
-
-            if SwtChatGPT.IsOn then
+            {if AMessage.&type = 'poll_creation' then
             begin
-              if Question <> '' then
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar(AMessage.pollName));
+
+              for m := 0 to Length(AMessage.pollOptions) -1 do
               begin
-                //Créditos --> https://github.com/landgraf-dev/openai-delphi
-                Answer := AskQuestion(Question, AChat.id);
-                phoneNumber := Copy(Answer, 1, pos('#', Answer)-1);
-                Answer := StringReplace(Answer, phoneNumber + '#', '',[]);
-
-                if Trim(Answer) <> '' then
-                  frDemo.TWPPConnect1.SendTextMessageEx(phoneNumber, TWPPConnectEmoticons.robot + ' *ChatGPT* ' + Answer, 'createChat: true', '123')
-                  //frDemo.TWPPConnect1.SendTextMessageEx(frameMensagem1.ed_num.Text, 'Escreva sua Perguanta?', options, '123')
-                else
-                  frDemo.TWPPConnect1.SendTextMessageEx(phoneNumber, TWPPConnectEmoticons.robot + ' *ChatGPT* ' + 'Could not retrieve an answer.', 'createChat: true', '123');
-
+                frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar(AMessage.pollOptions[m].LocalId.toString + ' - ' + AMessage.pollOptions[m].name));
+                //frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  LocalId: ' + AMessage.pollOptions[m].LocalId.toString));
+                //frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  Name: ' + AMessage.pollOptions[m].name));
               end;
-            end;
+            end;}
 
           end;
         end
         else
         begin
-          if Assigned(AChat.chatlistPreview) then
-          begin
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('Reação: ' + AChat.chatlistPreview.reactionText);
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('  Sender: ' + AChat.chatlistPreview.sender);
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('  msgKey: ' + AChat.chatlistPreview.msgKey);
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('  parentMsgKey: ' + AChat.chatlistPreview.parentMsgKey);
-            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(' ');
-          end;
 
-          {frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(PChar('Nome Contato: ' + Trim(AMessage.Sender.pushname)));
-          frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(PChar('UniqueID: ' + AMessage.id));
-          frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(PChar('Tipo mensagem: ' + AMessage.&type));
-          frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(PChar('Chat Id: ' + AChat.id));
-          frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(StringReplace(AMessage.body, #$A, #13#10,[rfReplaceAll, rfIgnoreCase]));
-          frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add(PChar('ACK: ' + FloatToStr(AMessage.ack)));
-
-          selectedButtonId := AMessage.selectedButtonId;
-          try
-            quotedMsg_caption := AMessage.quotedMsg.Caption;
-            // Mensagem Original do Click do Botão
-          except
-            on E: Exception do
-              quotedMsg_caption := '';
-          end;
-          if selectedButtonId = '' then
-            selectedButtonId := AMessage.selectedId;}
         end;
       end
       else
       begin  //GRUPO
+        //TWPPConnect1.ReadMessages(AChat.id);
+
         FChatID  := AChat.id;
+        TWPPConnect1.ReadMessages(AChat.id);
 
         // Added by Aurino 21/01/2023 14:34:50
         {debug in error}
@@ -1764,31 +2556,132 @@ begin
         'Access violation at address 009F7AE6. Read of address 00000030
         causa: usuario admin do grupo nao faz mais parte do grupo, logo o amessage.sender = nil;
         }
+
         if Assigned(AMessage.Sender) then
         begin
-          contato  := AMessage.Sender.pushname ;
+          contato  := AMessage.Sender.pushname;
           contato  := IfThen(trim(AMessage.sender.PushName) <> EmptyStr, AMessage.sender.PushName, AMessage.sender.verifiedName);
 
           telefone := AMessage.sender.id;
           telefone := Copy(telefone, 3, Pos('@', telefone) - 3);
           selectedButtonId := AMessage.selectedButtonId;
 
-          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('..::GRUPO::..'));
-          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Id Grupo: ' + AChat.id));
-          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Nome Grupo: ' + Trim(AChat.formattedTitle)));
-          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  telefone: ' + Trim(telefone)));
-          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  Nome Contato: ' + Trim( IfThen(trim(AMessage.sender.PushName) <> EmptyStr, AMessage.sender.PushName, AMessage.sender.verifiedName) )));
+          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('..::GROUP::..'));
+          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Id Group: ' + AChat.id));
+          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('Name Grupo: ' + Trim(AChat.formattedTitle)));
+          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  Number Participant: ' + Trim(telefone)));
+          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  Name Contact: ' + Trim( IfThen(trim(AMessage.sender.PushName) <> EmptyStr, AMessage.sender.PushName, AMessage.sender.verifiedName) )));
           frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(StringReplace(AMessage.body, #$A, #13#10, [rfReplaceAll, rfIgnoreCase]));
           frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  UniqueID: ' + AMessage.id));
           frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  Tipo mensagem: ' + AMessage.&type));
-          frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  ACK: ' + FloatToStr(AMessage.ack)));
+
+
+          if AMessage.&type = 'poll_creation' then
+          begin
+            frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar(AMessage.pollName));
+
+            for m := 0 to Length(AMessage.pollOptions) -1 do
+            begin
+              frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar(AMessage.pollOptions[m].LocalId.toString + ' - ' + AMessage.pollOptions[m].name));
+              //frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  LocalId: ' + AMessage.pollOptions[m].LocalId.toString));
+              //frameMensagensRecebidas1.memo_unReadMessage.Lines.Add(PChar('  Name: ' + AMessage.pollOptions[m].name));
+            end;
+          end;
+
+          //Marcar Mensagem como Lida
+          TWPPConnect1.ReadMessages(AChat.id);
 
           frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('');
+
         end;
+
       end;
+
     end;
   end;
 end;
+procedure TfrDemo.TWPPConnect1GetWAVersion(const WhatsAppWebVersion: TWAVersion);
+begin
+  frameMensagensRecebidas1.memo_unReadMessage.Lines.Add('WhatsAppWebVersion: ' + WhatsAppWebVersion.WAVersion);
+end;
+
+procedure TfrDemo.TWPPConnect1Get_deleteMessageNewResponse(const Response: TdeleteMessageNewResponseClass);
+var
+  StatusMensagem, wlo_Json, S_NUMERO, S_messageSendResult : string;
+  jsonString, jsonSendMsgResult: string;
+  jsonObject, jsonObjectMsgResult: TJSONObject;
+begin
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Event deleteMessageNewResponse');
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('  wid: ' + Response.wid);
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('  uniqueId: ' + Response.uniqueId);
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('  JsonMessage: ' + Response.JsonMessage);
+
+  wlo_Json := Response.JsonMessage;
+  jsonString := Response.JsonMessage;
+
+  jsonObject := TJSONObject.ParseJSONValue(jsonString) as TJSONObject;
+
+  try
+    if jsonObject <> nil then
+    begin
+      //frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Unique id: ' + jsonObject.GetValue('id').Value);
+      frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('isDeleted: ' + jsonObject.GetValue('isDeleted').Value);
+      //frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('SendMsgResult: ' + jsonObject.GetValue('sendMsgResult').ToString);
+      jsonSendMsgResult := jsonObject.GetValue('sendMsgResult').ToString;
+
+      jsonObjectMsgResult := TJSONObject.ParseJSONValue(jsonSendMsgResult) as TJSONObject;
+
+      try
+        if jsonObjectMsgResult <> nil then
+        begin
+          S_messageSendResult := jsonObjectMsgResult.GetValue('messageSendResult').Value;
+          frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('  messageSendResult: ' + S_messageSendResult + #13#10);
+        end
+        else
+        begin
+          frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('  JSON messageSendResult inválido.');
+        end;
+
+      finally
+        jsonObjectMsgResult.Free;
+      end;
+
+    end
+    else
+    begin
+      frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('  JSON inválido.');
+    end;
+  finally
+    jsonObject.Free;
+  end;
+
+end;
+
+procedure TfrDemo.TWPPConnect1Get_ErrorResponse(const Response: TErrorResponseClass);
+begin
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('RetEvent: ' + Response.RetEvent);
+
+  if Response.chatid <> '' then
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('chatid: ' + Response.chatid);
+  if Response.Seuid <> '' then
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Seuid: ' + Response.Seuid);
+
+  if Response.Seuid2 <> '' then
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Seuid2: ' + Response.Seuid2);
+
+  if Response.Seuid3 <> '' then
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Seuid3: ' + Response.Seuid3);
+
+  if Response.Seuid4 <> '' then
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Seuid4: ' + Response.Seuid4);
+
+  if Response.UniqueID <> '' then
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('UniqueID: ' + Response.UniqueID);
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Error: ' + Response.Error);
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('');
+
+end;
+
 procedure TfrDemo.TWPPConnect1Get_ProductCatalog(Sender: TObject;
   const ProductCatalog: TProductsList);
 var
@@ -1982,6 +2875,63 @@ begin
 
 end;
 
+procedure TfrDemo.TWPPConnect1Get_SendPollMessageResponse(const SendPollMessageResponse: TSendPollMessageResponseClass);
+var
+  StatusMensagem, wlo_Json, S_NUMERO : string;
+  jsonString: string;
+  jsonObject: TJSONObject;
+begin
+  //NOVO Necessário Recompilar o Projeto
+  try
+    wlo_Json := SendPollMessageResponse.JsonMessage;
+    jsonString := SendPollMessageResponse.JsonMessage;
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('');
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('SeuId: ' + SendPollMessageResponse.Seuid);
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('SeuId2: ' + SendPollMessageResponse.Seuid2);
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('' + wlo_Json);
+
+    // Faça o parsing do JSON
+    jsonObject := TJSONObject.ParseJSONValue(jsonString) as TJSONObject;
+
+    try
+      // A partir daqui, você pode acessar os valores do JSON por suas chaves
+      // Por exemplo:
+      if jsonObject <> nil then
+      begin
+        frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Unique id: ' + jsonObject.GetValue('id').Value);
+        frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Ack: ' + jsonObject.GetValue('ack').Value);
+        frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('SendMsgResult: ' + jsonObject.GetValue('sendMsgResult').ToString);
+      end
+      else
+      begin
+        frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('JSON inválido.');
+      end;
+    finally
+      // Não se esqueça de liberar a memória do objeto JSON
+      jsonObject.Free;
+    end;
+
+    {JMessagem := TRetorno_SendFileMensagemClass.FromJsonString(wlo_Json);
+
+    if JMessagem.result.ack = 1 then
+      StatusMensagem := 'Enviada'
+    else
+    if JMessagem.result.ack = 2 then
+      StatusMensagem := 'Recebida'
+    else
+    if JMessagem.result.ack = 3 then
+      StatusMensagem := 'Visualizada';
+    S_NUMERO := copy(JMessagem.result.id, 8, pos('@', JMessagem.result.id) - 8);
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('');
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('A Mensagem Foi "' + StatusMensagem + '"');
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Id Mensagem: ' + JMessagem.result.id);
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Telefone: ' + S_NUMERO);
+    frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('');}
+    //ShowMessage('A Mensagem Foi "' + StatusMensagem + '"');
+  except on E: Exception do
+  end;
+end;
+
 procedure TfrDemo.TWPPConnect1Get_sendTextMessage(const Mensagem: TMessagesClass);
 var
   StatusMensagem, wlo_Json, S_NUMERO : string;
@@ -2028,6 +2978,11 @@ begin
     StatusMensagem := 'Visualizada';
   frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('');
   frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('SeuID: ' + RespMensagem.SeuID);
+
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('SeuID2: ' + RespMensagem.SeuID2);
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('SeuID3: ' + RespMensagem.SeuID3);
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('SeuID4: ' + RespMensagem.SeuID4);
+
   frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Telefone: ' + RespMensagem.Telefone);
   frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('ACK: ' + FloatToStr(RespMensagem.Ack) + ' - ' + StatusMensagem);
   frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('Unique ID: ' + RespMensagem.ID);
@@ -2062,6 +3017,29 @@ begin
   else
     ShowMessage(vCheckNumber.id + ' é um numero INVÁLIDO');
 end;
+procedure TfrDemo.TWPPConnect1RetErrorWhiteScreen(Sender: TObject; Response: string);
+var
+  caminho : string;
+  NomeAplicacao: string;
+begin
+  NomeAplicacao := ExtractFileName(Application.ExeName);
+  NomeAplicacao := Copy(NomeAplicacao,1, pos('.exe', NomeAplicacao) -1);
+
+  frameMensagensEnviadas1.memo_unReadMessageEnv.Lines.Add('RetErrorWhiteScreen: ' + Response);
+
+  gravar_log('RetErrorWhiteScreen: ' + Response);
+  gravar_log('Force Restart Application ' + #13#10);
+
+  if not (FileExists(ExtractFilePath(Application.ExeName) + 'Reinicia' + NomeAplicacao + '.bat')) then
+  begin
+    CriarArquivoBAT_ReiniciaAplicacao;
+    SleepNoFreeze(1000);
+  end;
+
+  //Forçar Reiniciar a Aplicação  / Force Restart the Application
+  ShellExecute(handle,'open',PChar(ExtractFilePath(Application.ExeName) + 'Reinicia' + NomeAplicacao + '.bat'), '','',SW_MINIMIZE);
+end;
+
 procedure TfrDemo.TWPPConnect1WPPMonitorCrash(Sender: TObject;
   const WPPCrash: TWppCrash; AMonitorJSCrash: Boolean);
 begin
@@ -2080,4 +3058,48 @@ function TfrDemo.VerificaPalavraChave(pMensagem, pSessao, pTelefone,
   pContato: String): Boolean;
 begin
 end;
+
+
+function TfrDemo.ConvertUnicodeEscapeToUTF8(const input: string): UTF8String;
+var
+  regex: TRegEx;
+  match: TMatch;
+  unicodeCode: string;
+  unicodeValue: Word;
+  resultStr: string;
+begin
+  regex := TRegEx.Create('\\u([0-9A-Fa-f]{4})');
+  match := regex.Match(input);
+  resultStr := input;
+
+  while match.Success do
+  begin
+    if match.Groups.Count = 2 then
+    begin
+      unicodeCode := match.Groups[1].Value;
+      try
+        unicodeValue := StrToInt('$' + unicodeCode);
+
+        // Verifique se o valor Unicode é válido e corresponde a um caractere válido
+        if IsValidUnicodeCodePoint(unicodeValue) then
+        begin
+          resultStr := resultStr.Replace(match.Value, WideChar(unicodeValue));
+        end;
+      except
+        // Em caso de erro na conversão, mantenha a sequência original
+      end;
+    end;
+
+    match := match.NextMatch;
+  end;
+
+  Result := UTF8Decode(AnsiString(resultStr));//WideStringToUnicodeString(resultStr, CP_UTF8);
+end;
+
+function TfrDemo.IsValidUnicodeCodePoint(value: Word): Boolean;
+begin
+  // Verifica se o valor Unicode está dentro do intervalo válido (0-10FFFF)
+  Result := (value >= $0000) and ((value <= $D7FF) or ((value >= $E000) and (value <= $10FFFF)));
+end;
+
 end.
